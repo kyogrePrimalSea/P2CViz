@@ -72,7 +72,7 @@ st.markdown("""
 # Title
 # ---------------------------------------------------------------------------
 st.title("🔄 CM360 Path-to-Conversion Analyser")
-st.caption("Upload a CM360 Path-to-Conversion CSV export or paste a Google Drive link to begin analysis.")
+st.caption("Upload a CM360 Path-to-Conversion CSV export (comma or tab separated — auto-detected) or paste a Google Drive link to begin analysis.")
 
 # ---------------------------------------------------------------------------
 # File loading — two methods
@@ -91,9 +91,9 @@ load_error = None
 
 if load_method == "📁 Upload File":
     uploaded_file = st.file_uploader(
-        "Upload CM360 P2C Report (TSV/CSV)",
+        "Upload CM360 P2C Report (CSV)",
         type=['csv', 'tsv', 'txt'],
-        help="Export a Path-to-Conversion report from Campaign Manager 360. Must be tab-separated unpivoted format."
+        help="Export a Path-to-Conversion report from Campaign Manager 360 (comma or tab separated — auto-detected). Non-pivoted format."
     )
     if uploaded_file is not None:
         with st.spinner("Parsing report..."):
