@@ -1,7 +1,8 @@
 """
 utils/parser.py
 CM360 Path-to-Conversion CSV parser.
-Handles tab-separated CM360 exports with metadata header rows.
+Handles comma-separated OR tab-separated CM360 exports with metadata header rows.
+Separator is auto-detected from the file content.
 """
 import tempfile
 import os
@@ -10,10 +11,33 @@ import streamlit as st
 
 
 # ---------------------------------------------------------------------------
+# Separator auto-detection
+# ---------------------------------------------------------------------------
+
+def detect_separator(filepath: str) -> str:
+    """
+    Sniff the first 20 non-empty lines to determine whether the file uses
+    commas or tabs as its delimiter.
+    Returns ',' or '\t'.
+    """
+    with open(filepath, 'r', encoding='utf-8-sig') as f:
+        sample_lines = []
+        for line in f:
+            if line.strip():
+                sample_lines.append(line)
+            if len(sample_lines) >= 20:
+                break
+
+    tab_count = sum(line.count('\t') for line in sample_lines)
+    comma_count = sum(line.count(',') for line in sample_lines)
+    return '\t' if tab_count >= comma_count else ','
+
+
+# ---------------------------------------------------------------------------
 # Header detection
 # ---------------------------------------------------------------------------
 
-def find_header_row_index(filepath: str) -> int:
+def find_header_row_index(filepath: str, sep: str) -> int:
     """
     Scans line by line. Returns the index of the column header row.
     The header row is the line immediately after a line whose first cell
@@ -23,7 +47,7 @@ def find_header_row_index(filepath: str) -> int:
         lines = f.readlines()
 
     for i, line in enumerate(lines):
-        first_cell = line.split('\t')[0].strip()
+        first_cell = line.split(sep)[0].strip().strip('"')
         if first_cell.lower() == 'report fields':
             # Header is the very next non-blank line
             for j in range(i + 1, len(lines)):
@@ -45,10 +69,10 @@ def find_header_row_index(filepath: str) -> int:
 # Metadata extraction
 # ---------------------------------------------------------------------------
 
-def extract_metadata(filepath: str, header_row_index: int) -> dict:
+def extract_metadata(filepath: str, header_row_index: int, sep: str) -> dict:
     """
     Reads all rows before header_row_index.
-    Each row is tab-split. First cell = key, second cell = value (if present).
+    First cell = key, second cell = value (if present).
     Special case: 'Activity' key can appear multiple times — collect as list.
     """
     metadata = {
@@ -68,7 +92,7 @@ def extract_metadata(filepath: str, header_row_index: int) -> dict:
     for i, line in enumerate(lines):
         if i >= header_row_index:
             break
-        parts = [p.strip() for p in line.split('\t')]
+        parts = [p.strip().strip('"') for p in line.split(sep)]
         if len(parts) < 2 or not parts[0]:
             continue
         key = parts[0].lower()
@@ -98,17 +122,19 @@ def extract_metadata(filepath: str, header_row_index: int) -> dict:
 # Raw DataFrame loader
 # ---------------------------------------------------------------------------
 
-def load_raw_df(filepath: str, header_row_index: int) -> pd.DataFrame:
+def load_raw_df(filepath: str, header_row_index: int, sep: str) -> pd.DataFrame:
     """
-    Load the tab-separated data starting from header_row_index.
+    Load the comma- or tab-separated data starting from header_row_index.
     Use dtype=str to prevent pandas from mangling Conversion IDs in scientific notation.
     """
     df = pd.read_csv(
         filepath,
-        sep='\t',
+        sep=sep,
         skiprows=header_row_index,
         dtype=str,
-        encoding='utf-8-sig'
+        encoding='utf-8-sig',
+        quoting=0,          # QUOTE_MINIMAL — handles quoted fields in CSV exports
+        on_bad_lines='warn'
     )
     # Strip all column name whitespace
     df.columns = [c.strip() for c in df.columns]
@@ -289,9 +315,10 @@ def load_p2c_report(uploaded_file) -> tuple:
         tmp_path = tmp.name
 
     try:
-        header_idx = find_header_row_index(tmp_path)
-        metadata = extract_metadata(tmp_path, header_idx)
-        df = load_raw_df(tmp_path, header_idx)
+        sep = detect_separator(tmp_path)
+        header_idx = find_header_row_index(tmp_path, sep)
+        metadata = extract_metadata(tmp_path, header_idx, sep)
+        df = load_raw_df(tmp_path, header_idx, sep)
         df = apply_type_conversions(df)
         df = classify_row_types(df)
         optional_cols = detect_optional_columns(df)
@@ -305,15 +332,17 @@ def load_p2c_report(uploaded_file) -> tuple:
 def load_p2c_report_from_bytes(file_bytes: bytes, filename: str = 'report.csv') -> tuple:
     """
     Same as load_p2c_report but accepts raw bytes (e.g. from Google Drive download).
+    Separator is auto-detected (comma or tab).
     """
     with tempfile.NamedTemporaryFile(mode='wb', suffix='.csv', delete=False) as tmp:
         tmp.write(file_bytes)
         tmp_path = tmp.name
 
     try:
-        header_idx = find_header_row_index(tmp_path)
-        metadata = extract_metadata(tmp_path, header_idx)
-        df = load_raw_df(tmp_path, header_idx)
+        sep = detect_separator(tmp_path)
+        header_idx = find_header_row_index(tmp_path, sep)
+        metadata = extract_metadata(tmp_path, header_idx, sep)
+        df = load_raw_df(tmp_path, header_idx, sep)
         df = apply_type_conversions(df)
         df = classify_row_types(df)
         optional_cols = detect_optional_columns(df)
